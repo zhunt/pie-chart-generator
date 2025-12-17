@@ -66,11 +66,62 @@ const processRow = async (row: ChartRow) => {
                     display: false
                 },
                 title: {
-                    display: true,
+                    display: false, // hide for now
                     text: `Chart for ${filename}`
                 }
             }
-        }
+        },
+        plugins: [{
+            id: 'custom_labels',
+            afterDatasetsDraw: (chart: any) => {
+                const ctx = chart.ctx;
+                chart.data.datasets.forEach((dataset: any, i: number) => {
+                    const meta = chart.getDatasetMeta(i);
+                    meta.data.forEach((element: any, index: number) => {
+                        // Get the value
+                        const value = dataset.data[index];
+                        const valueStr = ` ${value.toString()}% `;
+
+                        // Calculate position
+                        const { x, y } = element.tooltipPosition();
+
+                        // Heuristic for max font size
+                        // We appoximate the arc width at the center position
+                        const startAngle = element.startAngle;
+                        const endAngle = element.endAngle;
+                        const angle = endAngle - startAngle;
+                        const radius = element.outerRadius;
+
+                        // Arc length at the midpoint radius (roughly where text is)
+                        const midRadius = radius / 2;
+                        const arcLength = midRadius * angle;
+
+                        // Rough available height
+                        const availableHeight = radius * 0.4; // assume we can use 40% of radius radially
+
+                        // Estimate font size based on width and height constraints
+                        // Assume average char width is 0.6 * fontSize
+                        // width: fontSize * 0.6 * strLen <= arcLength
+                        // height: fontSize <= availableHeight
+
+                        const sizeByWidth = arcLength / (valueStr.length * 0.6);
+                        const sizeByHeight = availableHeight;
+
+                        // Cap it reasonable (e.g. don't go bigger than 100px or smaller than 10px unless tiny)
+                        let fontSize = Math.min(sizeByWidth, sizeByHeight);
+                        fontSize = Math.min(fontSize, 80); // Absolute max (was: 120)
+
+                        ctx.save();
+                        ctx.font = `bold ${Math.floor(fontSize)}px sans-serif`;
+                        ctx.fillStyle = 'white';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(valueStr, x, y);
+                        ctx.restore();
+                    });
+                });
+            }
+        }]
     };
 
     const image = await chartJSNodeCanvas.renderToBuffer(configuration);
