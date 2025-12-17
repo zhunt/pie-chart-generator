@@ -12,52 +12,58 @@ interface ChartRow {
 }
 
 const processRow = async (row: ChartRow) => {
-    // Determine keys from the row object
-    // Assuming CSV doesn't have headers, csv-parser might generate keys like '0', '1', etc. 
-    // OR if we treat it as headerless, we get array of values.
-    // Let's inspect how we read it. If we use headers: false.
+    // Row is now an object with keys matching CSV headers
+    const filename = row['Filename'];
 
-    const values = Object.values(row);
-    if (values.length < 6) {
-        console.error(`Invalid row, not enough columns: ${JSON.stringify(row)}`);
+    // Extract values for Field1 through Field5, filtering out invalid numbers
+    const possibleValues = [
+        row['Field1'],
+        row['Field2'],
+        row['Field3'],
+        row['Field4'],
+        row['Field5']
+    ];
+
+    const dataValues = possibleValues
+        .map(v => v ? parseFloat(v) : NaN)
+        .filter(v => !isNaN(v));
+
+    if (!filename || dataValues.length === 0) {
+        console.error(`Invalid row data (need at least 1 valid value): ${JSON.stringify(row)}`);
         return;
     }
 
-    const filename = values[0];
-    const dataValues = values.slice(1, 6).map(v => parseFloat(v));
-
-    if (dataValues.some(isNaN)) {
-        console.error(`Invalid data in row for ${filename}: ${JSON.stringify(values)}`);
-        return;
-    }
+    const allLabels = ['Field 1', 'Field 2', 'Field 3', 'Field 4', 'Field 5'];
+    const allBackgroundColors = [
+        'rgba(255, 99, 132, 0.8)',
+        'rgba(54, 162, 235, 0.8)',
+        'rgba(255, 206, 86, 0.8)',
+        'rgba(75, 192, 192, 0.8)',
+        'rgba(153, 102, 255, 0.8)',
+    ];
+    const allBorderColors = [
+        'rgba(255, 99, 132, 1)',
+        'rgba(54, 162, 235, 1)',
+        'rgba(255, 206, 86, 1)',
+        'rgba(75, 192, 192, 1)',
+        'rgba(153, 102, 255, 1)',
+    ];
 
     const configuration = {
         type: 'pie' as const,
         data: {
-            labels: ['Field 1', 'Field 2', 'Field 3', 'Field 4', 'Field 5'],
+            labels: allLabels.slice(0, dataValues.length),
             datasets: [{
                 data: dataValues,
-                backgroundColor: [
-                    'rgba(255, 99, 132, 0.8)',
-                    'rgba(54, 162, 235, 0.8)',
-                    'rgba(255, 206, 86, 0.8)',
-                    'rgba(75, 192, 192, 0.8)',
-                    'rgba(153, 102, 255, 0.8)',
-                ],
-                borderColor: [
-                    'rgba(255, 99, 132, 1)',
-                    'rgba(54, 162, 235, 1)',
-                    'rgba(255, 206, 86, 1)',
-                    'rgba(75, 192, 192, 1)',
-                    'rgba(153, 102, 255, 1)',
-                ],
+                backgroundColor: allBackgroundColors.slice(0, dataValues.length),
+                borderColor: allBorderColors.slice(0, dataValues.length),
                 borderWidth: 1
             }]
         },
         options: {
             plugins: {
                 legend: {
-                    display: true
+                    display: false
                 },
                 title: {
                     display: true,
@@ -76,7 +82,7 @@ const processRow = async (row: ChartRow) => {
 const results: ChartRow[] = [];
 
 fs.createReadStream(path.join(__dirname, '..', 'data', 'charts.csv'))
-    .pipe(csv({ headers: false }))
+    .pipe(csv()) // Default (headers: true)
     .on('data', (data) => results.push(data))
     .on('end', async () => {
         for (const row of results) {
