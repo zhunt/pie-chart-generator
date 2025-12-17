@@ -68,14 +68,14 @@ const processRow = async (row: ChartRow) => {
     };
 
     const image = await chartJSNodeCanvas.renderToBuffer(configuration);
-    const outputPath = path.join(__dirname, '..', `${filename}.png`);
+    const outputPath = path.join(__dirname, '..', 'chart-images', `${filename}.png`);
     fs.writeFileSync(outputPath, image);
     console.log(`Saved ${outputPath}`);
 };
 
 const results: ChartRow[] = [];
 
-fs.createReadStream('charts.csv')
+fs.createReadStream(path.join(__dirname, '..', 'data', 'charts.csv'))
     .pipe(csv({ headers: false }))
     .on('data', (data) => results.push(data))
     .on('end', async () => {
