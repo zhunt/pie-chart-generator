@@ -1,21 +1,24 @@
-import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import * as fs from 'fs';
 import * as path from 'path';
 import csv from 'csv-parser';
+import { JSDOM } from 'jsdom';
+import { Chart, registerables } from 'chart.js';
 
-const width = 600;
-const height = 600;
-const chartJSNodeCanvas = new ChartJSNodeCanvas({ width, height });
+// Register Chart.js components
+Chart.register(...registerables);
 
 interface ChartRow {
     [key: string]: string;
 }
 
+const width = 600;
+const height = 600;
+
 const processRow = async (row: ChartRow) => {
     // Row is now an object with keys matching CSV headers
     const filename = row['Filename'];
 
-    // Extract values for Field1 through Field5, filtering out invalid numbers
+    // Extract values for Field1 through Field5
     const possibleValues = [
         row['Field1'],
         row['Field2'],
@@ -49,8 +52,31 @@ const processRow = async (row: ChartRow) => {
         'rgba(153, 102, 255, 1)',
     ];
 
-    const configuration = {
-        type: 'pie' as const,
+    // Setup JSDOM
+    const dom = new JSDOM(`<!DOCTYPE html><body><canvas id="myChart" width="${width}" height="${height}"></canvas></body>`, {
+        runScripts: "dangerously",
+        resources: "usable",
+        pretendToBeVisual: true
+    });
+
+    const window = dom.window;
+    const document = window.document;
+
+    // Polyfill globals for Chart.js
+    // @ts-ignore
+    global.window = window;
+    // @ts-ignore
+    global.document = document;
+    // @ts-ignore
+    global.HTMLElement = window.HTMLElement;
+    // @ts-ignore
+    global.HTMLCanvasElement = window.HTMLCanvasElement;
+    // @ts-ignore
+    global.Image = window.Image;
+
+    // Chart Configuration
+    const configuration: any = {
+        type: 'pie',
         data: {
             labels: allLabels.slice(0, dataValues.length),
             datasets: [{
@@ -61,12 +87,15 @@ const processRow = async (row: ChartRow) => {
             }]
         },
         options: {
+            responsive: false,
+            animation: false,
+            devicePixelRatio: 1,
             plugins: {
                 legend: {
                     display: false
                 },
                 title: {
-                    display: false, // hide for now
+                    display: false,
                     text: `Chart for ${filename}`
                 }
             }
@@ -78,38 +107,22 @@ const processRow = async (row: ChartRow) => {
                 chart.data.datasets.forEach((dataset: any, i: number) => {
                     const meta = chart.getDatasetMeta(i);
                     meta.data.forEach((element: any, index: number) => {
-                        // Get the value
                         const value = dataset.data[index];
                         const valueStr = ` ${value.toString()}% `;
-
-                        // Calculate position
                         const { x, y } = element.tooltipPosition();
 
-                        // Heuristic for max font size
-                        // We appoximate the arc width at the center position
+                        // Font calculation...
                         const startAngle = element.startAngle;
                         const endAngle = element.endAngle;
                         const angle = endAngle - startAngle;
                         const radius = element.outerRadius;
-
-                        // Arc length at the midpoint radius (roughly where text is)
                         const midRadius = radius / 2;
                         const arcLength = midRadius * angle;
-
-                        // Rough available height
-                        const availableHeight = radius * 0.4; // assume we can use 40% of radius radially
-
-                        // Estimate font size based on width and height constraints
-                        // Assume average char width is 0.6 * fontSize
-                        // width: fontSize * 0.6 * strLen <= arcLength
-                        // height: fontSize <= availableHeight
-
+                        const availableHeight = radius * 0.4;
                         const sizeByWidth = arcLength / (valueStr.length * 0.6);
                         const sizeByHeight = availableHeight;
-
-                        // Cap it reasonable (e.g. don't go bigger than 100px or smaller than 10px unless tiny)
                         let fontSize = Math.min(sizeByWidth, sizeByHeight);
-                        fontSize = Math.min(fontSize, 80); // Absolute max (was: 120)
+                        fontSize = Math.min(fontSize, 80);
 
                         ctx.save();
                         ctx.font = `bold ${Math.floor(fontSize)}px sans-serif`;
@@ -124,19 +137,49 @@ const processRow = async (row: ChartRow) => {
         }]
     };
 
-    const image = await chartJSNodeCanvas.renderToBuffer(configuration);
+    const canvas = document.getElementById('myChart') as any;
+    const ctx = canvas.getContext('2d');
+
+    // Create Chart
+    new Chart(ctx, configuration);
+
+    // Use toDataURL as fallback
+    let imageBuffer: Buffer;
+    if (typeof (canvas as any).toBuffer === 'function') {
+        imageBuffer = (canvas as any).toBuffer('image/png');
+    } else {
+        const dataUrl = canvas.toDataURL('image/png');
+        // If dataUrl is 'data:,' it means empty or not supported
+        if (dataUrl === 'data:,') {
+            console.error('Canvas toDataURL returned empty data. Canvas package might not be linked properly.');
+        }
+        const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+        imageBuffer = Buffer.from(base64, 'base64');
+    }
+
     const outputPath = path.join(__dirname, '..', 'chart-images', `${filename}.png`);
-    fs.writeFileSync(outputPath, image);
+    const dir = path.dirname(outputPath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(outputPath, imageBuffer);
     console.log(`Saved ${outputPath}`);
+
+    window.close();
 };
 
 const results: ChartRow[] = [];
 
 fs.createReadStream(path.join(__dirname, '..', 'data', 'charts.csv'))
-    .pipe(csv()) // Default (headers: true)
+    .pipe(csv())
     .on('data', (data) => results.push(data))
     .on('end', async () => {
         for (const row of results) {
-            await processRow(row);
+            try {
+                await processRow(row);
+            } catch (err) {
+                console.error(`Error processing ${row['Filename']}:`, err);
+            }
         }
     });
