@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import csv from 'csv-parser';
-import { JSDOM } from 'jsdom';
-import { Chart, registerables } from 'chart.js';
+import { Chart, registerables, ChartConfiguration } from 'chart.js';
+import { createCanvas } from 'canvas';
 
 // Register Chart.js components
 Chart.register(...registerables);
@@ -13,6 +13,12 @@ interface ChartRow {
 
 const width = 600;
 const height = 600;
+
+// Helper to make Chart.js work with Node canvas
+// @ts-ignore
+global.CanvasGradient = function () { };
+// @ts-ignore
+global.CanvasPattern = function () { };
 
 const processRow = async (row: ChartRow) => {
     // Row is now an object with keys matching CSV headers
@@ -52,30 +58,8 @@ const processRow = async (row: ChartRow) => {
         'rgba(153, 102, 255, 1)',
     ];
 
-    // Setup JSDOM
-    const dom = new JSDOM(`<!DOCTYPE html><body><canvas id="myChart" width="${width}" height="${height}"></canvas></body>`, {
-        runScripts: "dangerously",
-        resources: "usable",
-        pretendToBeVisual: true
-    });
-
-    const window = dom.window;
-    const document = window.document;
-
-    // Polyfill globals for Chart.js
-    // @ts-ignore
-    global.window = window;
-    // @ts-ignore
-    global.document = document;
-    // @ts-ignore
-    global.HTMLElement = window.HTMLElement;
-    // @ts-ignore
-    global.HTMLCanvasElement = window.HTMLCanvasElement;
-    // @ts-ignore
-    global.Image = window.Image;
-
     // Chart Configuration
-    const configuration: any = {
+    const configuration: ChartConfiguration = {
         type: 'pie',
         data: {
             labels: allLabels.slice(0, dataValues.length),
@@ -89,7 +73,8 @@ const processRow = async (row: ChartRow) => {
         options: {
             responsive: false,
             animation: false,
-            devicePixelRatio: 1,
+            devicePixelRatio: 1, // Important for node-canvas one-to-one mapping
+            events: [], // Disable events
             plugins: {
                 legend: {
                     display: false
@@ -101,6 +86,15 @@ const processRow = async (row: ChartRow) => {
             }
         },
         plugins: [{
+            id: 'background',
+            beforeDraw: (chart: any) => {
+                const ctx = chart.ctx;
+                ctx.save();
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, width, height);
+                ctx.restore();
+            }
+        }, {
             id: 'custom_labels',
             afterDatasetsDraw: (chart: any) => {
                 const ctx = chart.ctx;
@@ -137,25 +131,14 @@ const processRow = async (row: ChartRow) => {
         }]
     };
 
-    const canvas = document.getElementById('myChart') as any;
+    const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
     // Create Chart
+    // @ts-ignore
     new Chart(ctx, configuration);
 
-    // Use toDataURL as fallback
-    let imageBuffer: Buffer;
-    if (typeof (canvas as any).toBuffer === 'function') {
-        imageBuffer = (canvas as any).toBuffer('image/png');
-    } else {
-        const dataUrl = canvas.toDataURL('image/png');
-        // If dataUrl is 'data:,' it means empty or not supported
-        if (dataUrl === 'data:,') {
-            console.error('Canvas toDataURL returned empty data. Canvas package might not be linked properly.');
-        }
-        const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-        imageBuffer = Buffer.from(base64, 'base64');
-    }
+    const imageBuffer = canvas.toBuffer('image/png');
 
     const outputPath = path.join(__dirname, '..', 'chart-images', `${filename}.png`);
     const dir = path.dirname(outputPath);
@@ -165,8 +148,6 @@ const processRow = async (row: ChartRow) => {
 
     fs.writeFileSync(outputPath, imageBuffer);
     console.log(`Saved ${outputPath}`);
-
-    window.close();
 };
 
 const results: ChartRow[] = [];
